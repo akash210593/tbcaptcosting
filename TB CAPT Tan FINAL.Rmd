@@ -1,0 +1,950 @@
+---
+title: "TB CAPT Tan Final"
+author: "Akash Malhotra"
+date: "2/11/2024"
+output: pdf_document
+---
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+Research Questions: 
+
+1. What is the mean difference in household and health system costs/benefits per participant tested and per TB patient identified for delivering TB testing between the intervention and the control arms? 
+
+2. What is the incremental cost-effectiveness ratio (ICER) between the control and intervention arms where effectiveness is modeled as the number of TB patients identified within one week of initial care seeking?   
+
+Intervention Arm: xx participants tested via Molbio Truenat for 5 months in the intervention arm
+Control SoC arm: yy participants tested via GeneXpert for 5 months in the standard of care arm 
+
+Inputs
+
+
+Truenat arm:
+
+-- initiated on TB treatment within a week as a proportion of all tested
+-- delivery costs per participant tested
+-- household costs per participant tested
+
+SOC arm : 
+
+-- initiated on TB treatment within a week as a proportion of all tested
+-- delivery costs per participant tested
+-- household costs per participant tested
+
+```{r packages}
+library (tidyverse)
+library(ggplot2)
+library(dplyr)
+library(triangle)
+library(car)
+library(collapse)
+
+params <- read.csv("parameters_tan.csv")
+
+lambda <- 3 #change back to 0.7 for base case
+#lambda_row <- 4
+lambda_values <- c(0.1, 0.2, 0.5, 0.7, 1, 2, 3, 4, 6, 8, 12, 16)
+lambda_row <- which(lambda_values == lambda)
+
+
+params <- params[lambda_row,]
+
+params_row <- params
+
+
+```
+
+#First, set up the treatment.sim function by denoting all relevant input parameters you’re doing PSA with, and then some function for coming up with your total costs and total effectiveness. (may just be an aggregate sum of each).
+
+```{r create model parameters}
+
+#UPDATE ALL #cluster ratio vs overall ratio?
+treatment.sim<-function(
+    num.test.int, #number of participants tested in the intervention arm 
+    num.test.con, #number of participants tested in the control arm
+    ratio.oc.int, #proportion of participants having the primary outcome in intervention arm
+    ratio.oc.con, #proportion of participants having the primary outcome in control arm
+    ratio.ltc.int, #proportion of participants linked to care over the year in the intervention arm  
+    ratio.ltc.con, # proportion of particpants linked to care over the year in the control arm 
+    cost.test.int, #cartridge costs in intervention arm 
+    cost.cons.int, #other consumables in the intervention arm
+    cost.eqp.int, #equipment cost in intervention arm 
+    cost.war.int, #warranty and maint cost intervention arm 
+    cost.trn.int, #training costs in the intervention arm 
+    cost.cme.int, #comm and M&E costs intervention arm 
+    cost.hss.int, #health system staff costs in the intervention arm 
+    cost.misc.int, # misc costs in the intervention arm 
+    cost.fee.int, # intervention fee
+    cost.lab.int, # intervention lab
+    cost.med.int, # intervention medicine
+    cost.trv.int, # travel 
+    cost.food.int, #including food for person accompanying
+    cost.chc.int,#including childcare for person accompanying
+    cost.mw.int, # itnervention missed work
+    cost.oth.int, # itnervention other
+    cost.test.con, #cartridge costs in control arm  
+    cost.cons.con, #other consumables in the control arm 
+    cost.eqp.con, #equipment cost in the control arm 
+    cost.war.con, #warranty and maint cost control arm 
+    cost.trn.con, #training costs in the control arm 
+    cost.cme.con, #comm and M&E costs control arm
+    cost.hss.con, #health system staff costs in the intervention arm 
+    cost.misc.con, # misc costs in the control arm 
+    cost.fee.con, # control fee
+    cost.lab.con, # control lab
+    cost.med.con, # control medicine
+    cost.trv.con, # travel control
+    cost.food.con,#including food for person accompanying
+    cost.chc.con,#including childcare for person accompanying
+    cost.mw.con,  # control missed work
+    cost.oth.con # control other
+)
+    
+    #cost.err.int, #per household error costs in the intervention arm +- 10%
+    #cost.err.con, #per household error costs in the control arm +- 10% 
+    
+      { #Here, set up our values of interest (total cost and # of patients initiating and completing treatment)
+ 
+  tot.oc.int <- ratio.oc.int*num.test.int # no. of people with outcome, denominator for CE
+  tot.oc.con <- ratio.oc.con*num.test.con
+  
+  tot.ltc.int <- ratio.ltc.int*num.test.int # no. of people linked to care over the year
+  tot.ltc.con <- ratio.ltc.con*num.test.con
+  
+  cost.tot.int <- cost.test.int + cost.cons.int + cost.eqp.int + cost.war.int + cost.trn.int + cost.cme.int + cost.hss.int + cost.misc.int
+  
+  cost.pat.int <- cost.fee.int + cost.lab.int + cost.med.int + cost.trv.int + cost.food.int + cost.chc.int + cost.mw.int + cost.oth.int
+  
+  
+  cost.soc.int <- cost.tot.int + cost.pat.int 
+  ovr.cost.int <- num.test.int*cost.soc.int #numerator for CE
+  
+  cost.tot.con <- cost.test.con + cost.cons.con + cost.eqp.con + cost.war.con + cost.trn.con + cost.cme.con + cost.hss.con + cost.misc.con
+  
+   cost.pat.con <- cost.fee.con + cost.lab.con + cost.med.con + 1.5*cost.trv.con + 1.5*cost.food.con + 1.5*cost.chc.con + 1.5*cost.mw.con + 1.5*cost.oth.con
+  
+  cost.soc.con <- cost.tot.con + cost.pat.con 
+   ovr.cost.con <- num.test.con*cost.soc.con #numerator for CE
+ 
+ ########### ICER VALUES #############
+  incr.total.cost <- (ovr.cost.int - ovr.cost.con)
+  incr.total.effect <- (tot.oc.int - tot.oc.con)
+  
+  incr.ratio <- (incr.total.cost / incr.total.effect) #primary CE outcome
+  
+  cost.per.oc.int <- ovr.cost.int/tot.oc.int #primary cost outcome
+  cost.per.oc.con <- ovr.cost.con/tot.oc.con
+  
+
+  
+  #return the key results: cure and cost in each scenario
+    
+
+  results<-c(num.test.int,
+             num.test.con,
+             ratio.oc.int,
+             ratio.oc.con,
+             ratio.ltc.int,
+             ratio.ltc.con,
+             tot.oc.int,
+             tot.oc.con,
+             tot.ltc.int,
+             tot.ltc.con,
+             cost.test.int,
+             cost.cons.int,
+             cost.eqp.int,
+             cost.war.int,
+             cost.trn.int,
+             cost.cme.int,
+             cost.hss.int,
+             cost.misc.int,
+             cost.tot.int,
+             cost.fee.int,
+             cost.lab.int,
+             cost.med.int,
+             cost.trv.int,
+             cost.food.int,
+             cost.chc.int,
+             cost.mw.int,
+             cost.oth.int,
+             cost.pat.int,
+             cost.soc.int,
+             ovr.cost.int,
+             cost.test.con,
+             cost.cons.con,
+             cost.eqp.con,
+             cost.war.con,
+             cost.trn.con,
+             cost.cme.con,
+             cost.hss.con,
+             cost.misc.con,
+             cost.tot.con,
+             cost.fee.con,
+             cost.lab.con,
+             cost.med.con,
+             cost.trv.con,
+             cost.food.con,
+             cost.chc.con,
+             cost.mw.con,
+             cost.oth.con,
+             cost.pat.con,
+             cost.soc.con,
+             ovr.cost.con
+             )
+  
+   names(results)<-c("Number of tests intervention",
+                     "Number of tests control",
+                     "Outcome ratio intervention",
+                     "Outcome ratio control",
+                     "linkage to care ratio intervention",
+                     "linkage to care ratio control",
+                     "Total outcomes intervention",
+                     "Total outcomes control",
+                     "Total linkage to care intervention",
+                     "Total linkage to care control",
+                    "cartridge costs intervention",
+                    "Other consumables costs intervention",
+                    "equipment cost intervention",
+                    "warranty and maintenance costs intervention",
+                    "training costs intervention",
+                     "communication and M&E costs intervention",
+                    "Health system staffing costs intervention",
+                    "miscellaneous costs intervention",
+                    "total costs intervention", 
+                    "testing fee intervention",
+                    "lab cost intervention",
+                    "medicine cost intervention",
+                    "travel cost intervention",
+                    "food cost intervention",
+                    "childcare cost intervention",
+                    "missed work cost intervention",
+                    "other cost intervention",
+                    "total patient cost intervention",
+                    "total societal cost intervention",
+                    "Overall cost intrvention",
+                    "cartridge costs control",
+                    "Other consumables costs control",
+                    "equipment cost control",
+                    "warranty and maintenance costs control",
+                    "training costs control",
+                    "communication and M&E costs control",
+                    "Health system staffing costs control",
+                    "miscellaneous costs control",
+                    "total costs control",
+                      "testing fee control",
+                    "lab cost control",
+                    "medicine cost control",
+                    "travel cost control",
+                    "food cost control",
+                    "childcare cost control",
+                    "missed work cost control",
+                    "other cost control",
+                    "total patient cost control",
+                    "total societal cost control",
+                    "overall cost control"
+   )
+           
+  
+  return(results)
+}
+```       
+
+
+```{r set-up the parameter values}
+param.ranges<-data.frame("variable"=character(38), 
+                         "distribution"=character(38),
+                         "parameter1"=numeric(38),
+                         "parameter2"=numeric(38),
+                         "parameter3"=numeric(38),
+                         "parameter1.name"=numeric(38), 
+                         "parameter2.name"=numeric(38),
+                         "parameter3.name"=numeric(38))
+
+param.ranges[,"variable"]<-c(
+             "num.test.int",
+             "num.test.con",
+             "ratio.oc.int",
+             "ratio.oc.con",
+             "ratio.ltc.int",
+             "ratio.ltc.con",
+             "cost.test.int",
+             "cost.cons.int",
+             "cost.eqp.int",
+             "cost.war.int",
+             "cost.trn.int",
+             "cost.cme.int",
+             "cost.hss.int",
+             "cost.misc.int",
+             "cost.fee.int",
+             "cost.lab.int",
+             "cost.med.int",
+             "cost.trv.int",
+             "cost.food.int",
+             "cost.chc.int",
+             "cost.mw.int",
+             "cost.oth.int",
+             "cost.test.con",
+             "cost.cons.con",
+             "cost.eqp.con",
+             "cost.war.con",
+             "cost.trn.con",
+             "cost.cme.con",
+             "cost.hss.con",
+             "cost.misc.con",
+             "cost.fee.con",
+             "cost.lab.con",
+             "cost.med.con",
+             "cost.trv.con",
+             "cost.food.con",
+             "cost.chc.con",
+             "cost.mw.con",
+             "cost.oth.con"
+             
+            )
+
+#Assigns a name to each of the above variables in the param.ranges data frame.
+
+           
+param.ranges[,"distribution"]<-c(
+"beta", #Tested in intervention arm
+"beta", #Tested in control arm
+"beta", #outcome ratio intervention arm
+"beta", #outcome ratio control arm
+"beta", #linkage to care intervention
+"beta", #linkage to care control
+"beta", #Intervention cartridge costs
+"beta", #intervention other consumables costs
+"beta", #intervention equipment costs
+"beta", #intervention warranty and maintenance costs
+"beta", #intervention training costs
+"beta", #intervention communication and M&E costs
+"beta", #intervention staffing costs
+"beta", #intervention misc costs
+"beta", #intervention fee
+"beta", #intervention lab
+"beta", #intervention med
+"beta", # intervention travel
+"beta", # intervention food
+"beta", #intervention childcare
+"beta", #intervention missed work
+"beta", #intervention other
+"beta", #control cartridge costs
+"beta", #control other consumables costs
+"beta", #control equipment costs
+"beta", #control warranty and maintenance costs
+"beta", #control training costs
+"beta", #control communication and M&E costs
+"beta", #control staffing costs
+"beta", #control misc costs
+"beta", # control fee
+"beta", # control lab
+"beta", # control med
+"beta", # control travel
+"beta", # control food
+"beta", # control childcare
+"beta", # control missed work
+"beta" # control other
+)
+#Assigns a distribution to each parameter. Note: common cost distributions are uniform, normal, triangular, and beta.
+
+# numbers fed in based on lamda = 0.7 and avg tests per month in both arms
+
+#Minimum values
+ param.ranges[,"parameter1"]<-c(
+    params_row$min.num.test.int, #number of participants tested in the intervention arm 
+    params_row$min.num.test.con, #number of participants tested in the control arm
+    params_row$min.ratio.oc.int, #proportion of participants having the primary outcome in intervention arm
+    params_row$min.ratio.oc.con, #proportion of participants having the primary outcome in control arm
+    params_row$min.ratio.ltc.int, #proportion of participants linked to care over 60 days in intervention
+    params_row$min.ratio.ltc.con, # proportion of particpants linked to care over the year in the control arm 
+    params_row$min.cost.test.int, #cartridge costs in intervention arm 
+    params_row$min.cost.cons.int, #other consumables in the intervention arm
+    params_row$min.cost.eqp.int, #equipment cost in intervention arm 
+    params_row$min.cost.war.int, #warranty and maint cost intervention arm 
+    params_row$min.cost.trn.int, #training costs in the intervention arm 
+    params_row$min.cost.cme.int, #comm and M&E costs intervention arm 
+    params_row$min.cost.hss.int, #health system staff costs in the intervention arm 
+    params_row$min.cost.misc.int, # misc costs in the intervention arm 
+    params_row$min.cost.fee.int, # intervention fee
+    params_row$min.cost.lab.int, # intervention lab
+    params_row$min.cost.med.int, # intervention medicine
+    params_row$min.cost.trv.int, # travel 
+    params_row$min.cost.food.int, #including food for person accompanying
+    params_row$min.cost.chc.int,#including childcare for person accompanying
+    params_row$min.cost.mw.int, # itnervention missed work
+    params_row$min.cost.oth.int, # itnervention other
+    params_row$min.cost.test.con, #cartridge costs in control arm  
+    params_row$min.cost.cons.con, #other consumables in the control arm 
+    params_row$min.cost.eqp.con, #equipment cost in the control arm 
+    params_row$min.cost.war.con, #warranty and maint cost control arm 
+    params_row$min.cost.trn.con, #training costs in the control arm 
+    params_row$min.cost.cme.con, #comm and M&E costs control arm
+    params_row$min.cost.hss.con, #health system staff costs in the intervention arm 
+    params_row$min.cost.misc.con, # misc costs in the control arm 
+    params_row$min.cost.fee.con, # control fee
+    params_row$min.cost.lab.con, # control lab
+    params_row$min.cost.med.con, # control medicine
+    params_row$min.cost.trv.con, # travel control
+    params_row$min.cost.food.con,#including food for person accompanying
+    params_row$min.cost.chc.con,#including childcare for person accompanying
+    params_row$min.cost.mw.con,  # control missed work
+    params_row$min.cost.oth.con # control other
+)
+
+ #Max values
+  param.ranges[,"parameter2"]<-c(
+    params_row$max.num.test.int, #number of participants tested in the intervention arm 
+    params_row$max.num.test.con, #number of participants tested in the control arm
+    params_row$max.ratio.oc.int, #proportion of participants having the primary outcome in intervention arm
+    params_row$max.ratio.oc.con, #proportion of participants having the primary outcome in control arm
+    params_row$max.ratio.ltc.int, #proportion of participants linked to care over the year in the intervention
+    params_row$max.ratio.ltc.con, # proportion of particpants linked to care over the year in the control arm 
+    params_row$max.cost.test.int, #cartridge costs in intervention arm 
+    params_row$max.cost.cons.int, #other consumables in the intervention arm
+    params_row$max.cost.eqp.int, #equipment cost in intervention arm 
+    params_row$max.cost.war.int, #warranty and maint cost intervention arm 
+    params_row$max.cost.trn.int, #training costs in the intervention arm 
+    params_row$max.cost.cme.int, #comm and M&E costs intervention arm 
+    params_row$max.cost.hss.int, #health system staff costs in the intervention arm 
+    params_row$max.cost.misc.int, # misc costs in the intervention arm 
+    params_row$max.cost.fee.int, # intervention fee
+    params_row$max.cost.lab.int, # intervention lab
+    params_row$max.cost.med.int, # intervention medicine
+    params_row$max.cost.trv.int, # travel 
+    params_row$max.cost.food.int, #including food for person accompanying
+    params_row$max.cost.chc.int,#including childcare for person accompanying
+    params_row$max.cost.mw.int, # itnervention missed work
+    params_row$max.cost.oth.int, # itnervention other
+    params_row$max.cost.test.con, #cartridge costs in control arm  
+    params_row$max.cost.cons.con, #other consumables in the control arm 
+    params_row$max.cost.eqp.con, #equipment cost in the control arm 
+    params_row$max.cost.war.con, #warranty and maint cost control arm 
+    params_row$max.cost.trn.con, #training costs in the control arm 
+    params_row$max.cost.cme.con, #comm and M&E costs control arm
+    params_row$max.cost.hss.con, #health system staff costs in the intervention arm 
+    params_row$max.cost.misc.con, # misc costs in the control arm 
+    params_row$max.cost.fee.con, # control fee
+    params_row$max.cost.lab.con, # control lab
+    params_row$max.cost.med.con, # control medicine
+    params_row$max.cost.trv.con, # travel control
+    params_row$max.cost.food.con,#including food for person accompanying
+    params_row$max.cost.chc.con,#including childcare for person accompanying
+    params_row$max.cost.mw.con,  # control missed work
+    params_row$max.cost.oth.con # control other
+)
+  #PE
+    param.ranges[,"parameter3"]<-c(
+    params_row$pe.num.test.int, #number of participants tested in the intervention arm 
+    params_row$pe.num.test.con, #number of participants tested in the control arm
+    params_row$pe.ratio.oc.int, #proportion of participants having the primary outcome in intervention arm
+    params_row$pe.ratio.oc.con, #proportion of participants having the primary outcome in control arm
+    params_row$pe.ratio.ltc.int, #proportion of participants linked to care over the year in the intervention
+    params_row$pe.ratio.ltc.con, # proportion of particpants linked to care over the year in the control arm 
+    params_row$pe.cost.test.int, #cartridge costs in intervention arm 
+    params_row$pe.cost.cons.int, #other consumables in the intervention arm
+    params_row$pe.cost.eqp.int, #equipment cost in intervention arm 
+    params_row$pe.cost.war.int, #warranty and maint cost intervention arm 
+    params_row$pe.cost.trn.int, #training costs in the intervention arm 
+    params_row$pe.cost.cme.int, #comm and M&E costs intervention arm 
+    params_row$pe.cost.hss.int, #health system staff costs in the intervention arm 
+    params_row$pe.cost.misc.int, # misc costs in the intervention arm 
+    params_row$pe.cost.fee.int, # intervention fee
+    params_row$pe.cost.lab.int, # intervention lab
+    params_row$pe.cost.med.int, # intervention medicine
+    params_row$pe.cost.trv.int, # travel 
+    params_row$pe.cost.food.int, #including food for person accompanying
+    params_row$pe.cost.chc.int,#including childcare for person accompanying
+    params_row$pe.cost.mw.int, # itnervention missed work
+    params_row$pe.cost.oth.int, # itnervention other
+    params_row$pe.cost.test.con, #cartridge costs in control arm  
+    params_row$pe.cost.cons.con, #other consumables in the control arm 
+    params_row$pe.cost.eqp.con, #equipment cost in the control arm 
+    params_row$pe.cost.war.con, #warranty and maint cost control arm 
+    params_row$pe.cost.trn.con, #training costs in the control arm 
+    params_row$pe.cost.cme.con, #comm and M&E costs control arm
+    params_row$pe.cost.hss.con, #health system staff costs in the intervention arm 
+    params_row$pe.cost.misc.con, # misc costs in the control arm 
+    params_row$pe.cost.fee.con, # control fee
+    params_row$pe.cost.lab.con, # control lab
+    params_row$pe.cost.med.con, # control medicine
+    params_row$pe.cost.trv.con, # travel control
+    params_row$pe.cost.food.con,#including food for person accompanying
+    params_row$pe.cost.chc.con,#including childcare for person accompanying
+    params_row$pe.cost.mw.con,  # control missed work
+    params_row$pe.cost.oth.con # control other
+)
+    ```
+    
+```{r add the alpha and beta values}
+#Updated with inflation
+param.ranges[,"parameter1.name"]<-c( #The ALPHA value
+    params_row$alpha.num.test.int, #number of participants tested in the intervention arm 
+    params_row$alpha.num.test.con, #number of participants tested in the control arm
+    params_row$alpha.ratio.oc.int, #proportion of participants having the primary outcome in intervention arm
+    params_row$alpha.ratio.oc.con, #proportion of participants having the primary outcome in control arm
+    params_row$alpha.ratio.ltc.int, #proportion of participants linked to care over the year in the intervent
+    params_row$alpha.ratio.ltc.con, # proportion of particpants linked to care over the year in the control 
+    params_row$alpha.cost.test.int, #cartridge costs in intervention arm 
+    params_row$alpha.cost.cons.int, #other consumables in the intervention arm
+    params_row$alpha.cost.eqp.int, #equipment cost in intervention arm 
+    params_row$alpha.cost.war.int, #warranty and maint cost intervention arm 
+    params_row$alpha.cost.trn.int, #training costs in the intervention arm 
+    params_row$alpha.cost.cme.int, #comm and M&E costs intervention arm 
+    params_row$alpha.cost.hss.int, #health system staff costs in the intervention arm 
+    params_row$alpha.cost.misc.int, # misc costs in the intervention arm 
+    params_row$alpha.cost.fee.int, # intervention fee
+    params_row$alpha.cost.lab.int, # intervention lab
+    params_row$alpha.cost.med.int, # intervention medicine
+    params_row$alpha.cost.trv.int, # travel 
+    params_row$alpha.cost.food.int, #including food for person accompanying
+    params_row$alpha.cost.chc.int,#including childcare for person accompanying
+    params_row$alpha.cost.mw.int, # itnervention missed work
+    params_row$alpha.cost.oth.int, # itnervention other
+    params_row$alpha.cost.test.con, #cartridge costs in control arm  
+    params_row$alpha.cost.cons.con, #other consumables in the control arm 
+    params_row$alpha.cost.eqp.con, #equipment cost in the control arm 
+    params_row$alpha.cost.war.con, #warranty and maint cost control arm 
+    params_row$alpha.cost.trn.con, #training costs in the control arm 
+    params_row$alpha.cost.cme.con, #comm and M&E costs control arm
+    params_row$alpha.cost.hss.con, #health system staff costs in the intervention arm 
+    params_row$alpha.cost.misc.con, # misc costs in the control arm 
+    params_row$alpha.cost.fee.con, # control fee
+    params_row$alpha.cost.lab.con, # control lab
+    params_row$alpha.cost.med.con, # control medicine
+    params_row$alpha.cost.trv.con, # travel control
+    params_row$alpha.cost.food.con,#including food for person accompanying
+    params_row$alpha.cost.chc.con,#including childcare for person accompanying
+    params_row$alpha.cost.mw.con,  # control missed work
+    params_row$alpha.cost.oth.con # control other
+  )
+  
+param.ranges[,"parameter2.name"]<-c( #The BETA value
+    params_row$beta.num.test.int, #number of participants tested in the intervention arm 
+    params_row$beta.num.test.con, #number of participants tested in the control arm
+    params_row$beta.ratio.oc.int, #proportion of participants having the primary outcome in intervention arm
+    params_row$beta.ratio.oc.con, #proportion of participants having the primary outcome in control arm
+    params_row$beta.ratio.ltc.int, #proportion of participants linked to care over the year in the interve
+    params_row$beta.ratio.ltc.con, # proportion of particpants linked to care over the year in the control a
+    params_row$beta.cost.test.int, #cartridge costs in intervention arm 
+    params_row$beta.cost.cons.int, #other consumables in the intervention arm
+    params_row$beta.cost.eqp.int, #equipment cost in intervention arm 
+    params_row$beta.cost.war.int, #warranty and maint cost intervention arm 
+    params_row$beta.cost.trn.int, #training costs in the intervention arm 
+    params_row$beta.cost.cme.int, #comm and M&E costs intervention arm 
+    params_row$beta.cost.hss.int, #health system staff costs in the intervention arm 
+    params_row$beta.cost.misc.int, # misc costs in the intervention arm 
+    params_row$beta.cost.fee.int, # intervention fee
+    params_row$beta.cost.lab.int, # intervention lab
+    params_row$beta.cost.med.int, # intervention medicine
+    params_row$beta.cost.trv.int, # travel 
+    params_row$beta.cost.food.int, #including food for person accompanying
+    params_row$beta.cost.chc.int,#including childcare for person accompanying
+    params_row$beta.cost.mw.int, # itnervention missed work
+    params_row$beta.cost.oth.int, # itnervention other
+    params_row$beta.cost.test.con, #cartridge costs in control arm  
+    params_row$beta.cost.cons.con, #other consumables in the control arm 
+    params_row$beta.cost.eqp.con, #equipment cost in the control arm 
+    params_row$beta.cost.war.con, #warranty and maint cost control arm 
+    params_row$beta.cost.trn.con, #training costs in the control arm 
+    params_row$beta.cost.cme.con, #comm and M&E costs control arm
+    params_row$beta.cost.hss.con, #health system staff costs in the intervention arm 
+    params_row$beta.cost.misc.con, # misc costs in the control arm 
+    params_row$beta.cost.fee.con, # control fee
+    params_row$beta.cost.lab.con, # control lab
+    params_row$beta.cost.med.con, # control medicine
+    params_row$beta.cost.trv.con, # travel control
+    params_row$beta.cost.food.con,#including food for person accompanying
+    params_row$beta.cost.chc.con,#including childcare for person accompanying
+    params_row$beta.cost.mw.con,  # control missed work
+    params_row$beta.cost.oth.con # control other
+  )
+
+param.ranges[,"parameter3.name"]<-c(#Non-centrality parameter,
+    params_row$ncp.num.test.int, #number of participants tested in the intervention arm 
+    params_row$ncp.num.test.con, #number of participants tested in the control arm
+    params_row$ncp.ratio.oc.int, #proportion of participants having the primary outcome in intervention arm
+    params_row$ncp.ratio.oc.con, #proportion of participants having the primary outcome in control arm
+    params_row$ncp.ratio.ltc.int, #proportion of participants linked to care over the year in the interve
+    params_row$ncp.ratio.ltc.con, # proportion of particpants linked to care over the year in the control a
+    params_row$ncp.cost.test.int, #cartridge costs in intervention arm 
+    params_row$ncp.cost.cons.int, #other consumables in the intervention arm
+    params_row$ncp.cost.eqp.int, #equipment cost in intervention arm 
+    params_row$ncp.cost.war.int, #warranty and maint cost intervention arm 
+    params_row$ncp.cost.trn.int, #training costs in the intervention arm 
+    params_row$ncp.cost.cme.int, #comm and M&E costs intervention arm 
+    params_row$ncp.cost.hss.int, #health system staff costs in the intervention arm 
+    params_row$ncp.cost.misc.int, # misc costs in the intervention arm 
+    params_row$ncp.cost.fee.int, # intervention fee
+    params_row$ncp.cost.lab.int, # intervention lab
+    params_row$ncp.cost.med.int, # intervention medicine
+    params_row$ncp.cost.trv.int, # travel 
+    params_row$ncp.cost.food.int, #including food for person accompanying
+    params_row$ncp.cost.chc.int,#including childcare for person accompanying
+    params_row$ncp.cost.mw.int, # itnervention missed work
+    params_row$ncp.cost.oth.int, # itnervention other
+    params_row$ncp.cost.test.con, #cartridge costs in control arm  
+    params_row$ncp.cost.cons.con, #other consumables in the control arm 
+    params_row$ncp.cost.eqp.con, #equipment cost in the control arm 
+    params_row$ncp.cost.war.con, #warranty and maint cost control arm 
+    params_row$ncp.cost.trn.con, #training costs in the control arm 
+    params_row$ncp.cost.cme.con, #comm and M&E costs control arm
+    params_row$ncp.cost.hss.con, #health system staff costs in the intervention arm 
+    params_row$ncp.cost.misc.con, # misc costs in the control arm 
+    params_row$ncp.cost.fee.con, # control fee
+    params_row$ncp.cost.lab.con, # control lab
+    params_row$ncp.cost.med.con, # control medicine
+    params_row$ncp.cost.trv.con, # travel control
+    params_row$ncp.cost.food.con,#including food for person accompanying
+    params_row$ncp.cost.chc.con,#including childcare for person accompanying
+    params_row$ncp.cost.mw.con,  # control missed work
+    params_row$ncp.cost.oth.con # control other
+  ) 
+
+
+```
+
+```{r simulation prep, repetitions and matrix}
+#Define the number of simulations you intend to perform
+set.seed(26910)
+n.sims<-10000
+
+
+#Create a matrix to hold all of the sampled parameter values
+#Each row will represent 1 simulation; the columns in the row will correspond to the sampled parameter values for the row
+sampled.values<-matrix(nrow=n.sims,ncol=nrow(param.ranges))
+colnames(sampled.values)<-param.ranges[,"variable"]
+
+#Loop over the parameters (columns in sampled.values, rows in param.ranges) that will be sampled
+for(p in 1:ncol(sampled.values)){
+  
+  #check for the distribution that will be used
+  #check for a uniform distribution
+  if(param.ranges[p,"distribution"]=="uniform"){
+    
+    n.params<-runif( #sample from a uniform distribution
+      n.sims, #how many samples to draw = the number of simulations you will perform
+      min=param.ranges[p,"parameter1"], #define the lower bound parameter
+      max=param.ranges[p,"parameter2"] #define the upper bound
+    )
+    #exit the if-loop and go to the end
+    
+  }
+  #if not uniform, check if it is normal
+  if(param.ranges[p,"distribution"]=="normal"){
+    
+    n.params<-rnorm( #sample from a normal distribution
+      n.sims, #how many samples to draw = the number of simulations you will perform
+      mean=param.ranges[p,"parameter1"], #define the lower bound parameter
+      sd=param.ranges[p,"parameter2"] #define the upper bound
+    )
+    #exit the if-loop and go to the end
+    
+  }
+  
+  #if not uniform, check if it is lognormal
+  if(param.ranges[p,"distribution"]=="lognormal"){
+    
+    n.params<-rlnorm( #sample from a log-normal distribution
+      n.sims, #how many samples to draw = the number of simulations you will perform
+      meanlog=param.ranges[p,"parameter1"], #define the mean parameter
+      sdlog=param.ranges[p,"parameter2"] #define the standard deviation parameter
+    )
+    #exit the if-loop and go to the end
+    
+  }
+  
+  #if not lognormal, check if it is gamma
+  if(param.ranges[p,"distribution"]=="gamma"){
+    n.params<-rgamma( #sample from a log-normal distribution
+      n.sims, #how many samples to draw = the number of simulations you will perform
+      shape=param.ranges[p,"parameter1"], #define the k parameter
+      scale=param.ranges[p,"parameter2"] #define the theta parameter
+    )
+    #exit the if-loop and go to the end
+    
+  }
+  
+  #if not gamma, check if it is triangular
+  if(param.ranges[p,"distribution"]=="triangular"){
+    n.params<- rtriangle( #sample from a triangular distribution
+      n.sims, #how many samples to draw = the number of simulations you will perform
+      a = param.ranges[p,"parameter1"], #define the lower bound paramater/parameter input 1
+      b = param.ranges[p,"parameter2"], #define the upper bound parameter
+      c = param.ranges[p,"parameter3"] #define the mode/central tendency parameter
+    )
+  }
+  
+  #if not triangular, check if it is beta
+ if(param.ranges[p,"distribution"]=="beta"){
+    shape1 <- as.numeric(param.ranges[p,"parameter1.name"])
+    shape2 <- as.numeric(param.ranges[p,"parameter2.name"])
+    
+    if(!is.numeric(shape1) || !is.numeric(shape2)) {
+        stop("Shape parameters for beta distribution must be numeric.")
+    }
+    
+    n.params <- rbeta(
+      n.sims, 
+      shape1 = shape1, 
+      shape2 = shape2,
+      ncp = param.ranges[p,"parameter3.name"] #define the non-centrality parameter (should be 0)
+    ) 
+    #(parameter1 + (p *(parameter2 - parameter1)))
+  }
+  sampled.values[,p]<-n.params #fill the column of the matrix with the vector of sampled values
+  
+  #go to the next column
+}
+
+```
+
+```{r calculate "true" simulated values}
+#Change variable names to match TB CAPT, no other changes
+
+
+num.test.int <- (sampled.values[,1] * (as.numeric(param.ranges[1,4]) - as.numeric(param.ranges[1,3]))) + as.numeric(param.ranges[1,3])
+
+num.test.con <- (sampled.values[,2] * (as.numeric(param.ranges[2,4]) - as.numeric(param.ranges[2,3]))) + as.numeric(param.ranges[2,3])
+
+ratio.oc.int <- (sampled.values[,3] * (as.numeric(param.ranges[3,4]) - as.numeric(param.ranges[3,3]))) + as.numeric(param.ranges[3,3])
+
+ratio.oc.con <- (sampled.values[,4] * (as.numeric(param.ranges[4,4]) - as.numeric(param.ranges[4,3]))) + as.numeric(param.ranges[4,3])
+
+ratio.ltc.int <- (sampled.values[,5] * (as.numeric(param.ranges[5,4]) - as.numeric(param.ranges[5,3]))) + as.numeric(param.ranges[5,3])
+
+ratio.ltc.con <- (sampled.values[,6] * (as.numeric(param.ranges[6,4]) - as.numeric(param.ranges[6,3]))) + as.numeric(param.ranges[6,3])
+
+cost.test.int <- (sampled.values[,7] * (as.numeric(param.ranges[7,4]) - as.numeric(param.ranges[7,3]))) + as.numeric(param.ranges[7,3])
+
+cost.cons.int <- (sampled.values[,8] * (as.numeric(param.ranges[8,4]) - as.numeric(param.ranges[8,3]))) + as.numeric(param.ranges[8,3]) 
+
+cost.eqp.int<- (sampled.values[,9] * (as.numeric(param.ranges[9,4]) - as.numeric(param.ranges[9,3]))) + as.numeric(param.ranges[9,3])
+
+cost.war.int <- (sampled.values[,10] * (as.numeric(param.ranges[10,4]) - as.numeric(param.ranges[10,3]))) + as.numeric(param.ranges[10,3]) 
+
+cost.trn.int <- (sampled.values[,11] * (as.numeric(param.ranges[11,4]) - as.numeric(param.ranges[11,3]))) + as.numeric(param.ranges[11,3])
+
+cost.cme.int <- (sampled.values[,12] * (as.numeric(param.ranges[12,4]) - as.numeric(param.ranges[12,3]))) + as.numeric(param.ranges[12,3]) 
+
+cost.hss.int <- (sampled.values[,13] * (as.numeric(param.ranges[13,4]) - as.numeric(param.ranges[13,3]))) + as.numeric(param.ranges[13,3])
+
+cost.misc.int <- (sampled.values[,14] * (as.numeric(param.ranges[14,4]) - as.numeric(param.ranges[14,3]))) + as.numeric(param.ranges[14,3])
+
+cost.fee.int <- (sampled.values[,15] * (as.numeric(param.ranges[15,4]) - as.numeric(param.ranges[15,3]))) + as.numeric(param.ranges[15,3])
+
+cost.lab.int <- (sampled.values[,16] * (as.numeric(param.ranges[16,4]) - as.numeric(param.ranges[16,3]))) + as.numeric(param.ranges[16,3])
+
+cost.med.int <- (sampled.values[,17] * (as.numeric(param.ranges[17,4]) - as.numeric(param.ranges[17,3]))) + as.numeric(param.ranges[17,3])
+
+cost.trv.int <- (sampled.values[,18] * (as.numeric(param.ranges[18,4]) - as.numeric(param.ranges[18,3]))) + as.numeric(param.ranges[18,3])
+
+cost.food.int <- (sampled.values[,19] * (as.numeric(param.ranges[19,4]) - as.numeric(param.ranges[19,3]))) + as.numeric(param.ranges[19,3])
+
+cost.chc.int <- (sampled.values[,20] * (as.numeric(param.ranges[20,4]) - as.numeric(param.ranges[20,3]))) + as.numeric(param.ranges[20,3])
+
+cost.mw.int <- (sampled.values[,21] * (as.numeric(param.ranges[21,4]) - as.numeric(param.ranges[21,3]))) + as.numeric(param.ranges[21,3])
+
+cost.oth.int <- (sampled.values[,22] * (as.numeric(param.ranges[22,4]) - as.numeric(param.ranges[22,3]))) + as.numeric(param.ranges[22,3])
+
+cost.test.con <- (sampled.values[,23] * (as.numeric(param.ranges[23,4]) - as.numeric(param.ranges[23,3]))) + as.numeric(param.ranges[23,3])
+
+cost.cons.con <- (sampled.values[,24] * (as.numeric(param.ranges[24,4]) - as.numeric(param.ranges[24,3]))) + as.numeric(param.ranges[24,3])
+
+cost.eqp.con <- (sampled.values[,25] * (as.numeric(param.ranges[25,4]) - as.numeric(param.ranges[25,3]))) + as.numeric(param.ranges[25,3])
+
+cost.war.con <- (sampled.values[,26] * (as.numeric(param.ranges[26,4]) - as.numeric(param.ranges[26,3]))) + as.numeric(param.ranges[26,3])
+
+cost.trn.con <- (sampled.values[,27] * (as.numeric(param.ranges[27,4]) - as.numeric(param.ranges[27,3]))) + as.numeric(param.ranges[27,3])
+
+cost.cme.con <- (sampled.values[,28] * (as.numeric(param.ranges[28,4]) - as.numeric(param.ranges[28,3]))) + as.numeric(param.ranges[28,3])
+
+cost.hss.con <- (sampled.values[,29] * (as.numeric(param.ranges[29,4]) - as.numeric(param.ranges[29,3]))) + as.numeric(param.ranges[29,3])
+
+cost.misc.con <- (sampled.values[,30] * (as.numeric(param.ranges[30,4]) - as.numeric(param.ranges[30,3]))) + as.numeric(param.ranges[30,3])
+
+cost.fee.con <- (sampled.values[,31] * (as.numeric(param.ranges[31,4]) - as.numeric(param.ranges[31,3]))) + as.numeric(param.ranges[31,3])
+
+cost.lab.con <- (sampled.values[,32] * (as.numeric(param.ranges[32,4]) - as.numeric(param.ranges[32,3]))) + as.numeric(param.ranges[32,3])
+
+cost.med.con <- (sampled.values[,33] * (as.numeric(param.ranges[33,4]) - as.numeric(param.ranges[33,3]))) + as.numeric(param.ranges[33,3])
+
+cost.trv.con <- (sampled.values[,34] * (as.numeric(param.ranges[34,4]) - as.numeric(param.ranges[34,3]))) + as.numeric(param.ranges[34,3])
+
+cost.food.con <- (sampled.values[,35] * (as.numeric(param.ranges[35,4]) - as.numeric(param.ranges[35,3]))) + as.numeric(param.ranges[35,3])
+
+cost.chc.con <- (sampled.values[,36] * (as.numeric(param.ranges[36,4]) - as.numeric(param.ranges[36,3]))) + as.numeric(param.ranges[36,3])
+
+cost.mw.con <- (sampled.values[,37] * (as.numeric(param.ranges[37,4]) - as.numeric(param.ranges[37,3]))) + as.numeric(param.ranges[37,3])
+
+cost.oth.con <- (sampled.values[,38] * (as.numeric(param.ranges[38,4]) - as.numeric(param.ranges[38,3]))) + as.numeric(param.ranges[38,3])
+
+sampled.values.true <- cbind( 
+             num.test.int,
+             num.test.con,
+             ratio.oc.int,
+             ratio.oc.con,
+             ratio.ltc.int,
+             ratio.ltc.con,
+             cost.test.int,
+             cost.cons.int,
+             cost.eqp.int,
+             cost.war.int,
+             cost.trn.int,
+             cost.cme.int,
+             cost.hss.int,
+             cost.misc.int,
+             cost.fee.int,
+             cost.lab.int,
+             cost.med.int,
+             cost.trv.int,
+             cost.food.int,
+             cost.chc.int,
+             cost.mw.int,
+             cost.oth.int,
+             cost.test.con,
+             cost.cons.con,
+             cost.eqp.con,
+             cost.war.con,
+             cost.trn.con,
+             cost.cme.con,
+             cost.hss.con,
+             cost.misc.con,
+             cost.fee.con,
+             cost.lab.con,
+             cost.med.con,
+             cost.trv.con,
+             cost.food.con,
+             cost.chc.con,
+             cost.mw.con,
+             cost.oth.con
+            
+)
+
+```
+
+```{R Run the Simulations}
+#NO CHANGES
+#Perform your simulations using a combination of apply() and do.call()
+#apply() will iteratively perform the same function to each row and/or column of a matrix argument
+#The matrix of sampled input values will serve as our matrix argument X
+#We will set MARGIN=1 to indicate that we want to iterate over the rows (not columns) of the matrix
+#We will create a custom function to apply over each row (r)
+#The key of the custom function is do.call() 
+#do.call() calls a function of your choice and passes user-defined arguments to it
+#we will use it to call our previously-defined function treatment.sim()
+#We will supply it our row of sampled input values as user-defined arguments
+#arguments for do.call() must be in the form of a list: as.list(r)
+#apply() returns the outputs of each iteration as a column of a matrix
+#for ease of use, we will transpose - t() - the matrix so that each iteration will be returned as a row
+
+sim.out<-t(apply(X=sampled.values.true,MARGIN=1, FUN=function(r) do.call(what=treatment.sim, args=as.list(r)) ))
+#for each row of sampled.values, run function r which is our treatment.sim formula.
+sim.out.df <- as.data.frame(sim.out)
+
+
+
+#Becase treatment.sim() returns a vector of 4 results ("Scenario1.Cure","Scenario1.Cost","Scenario2.Cure","Scenario2.Cost")
+#sim.out contains 4 columns, each corresponding to one of the outputs of treatment.sim()
+#The first row of sim.out corresponds to the results of the simulation created by the first row of sampled input values in sampled.value
+```
+
+View(sim.out.df)
+write.csv(sim.out.df, "Tan_sim.csv")
+
+``` {r ICER values}
+sim.out.df <- sim.out.df
+ICER<-matrix(ncol=18, nrow=nrow(sim.out.df))
+colnames(ICER)<-c("Overall cost intervention","Overall cost control","Incremental cost", "Total outcomes intervention", "Total outcomes control", "Incremental effectiveness","ICER","Per outcome cost intervention", "Per outcome cost control", "Number of tests intervention", "Number of tests control", "Cost per test intervention", "Cost per test control", "Total diagnosis intervention", "Total diagnosis control", "Cost per diagnosis intervention", "Cost per diagnosis control", "Secondary ICER")
+
+ICER[,1]<- sim.out.df[,30] 
+
+ICER[,2]<- sim.out.df[,50] 
+
+ICER[,3] <- ICER[,1]-ICER[,2]
+
+ICER[,4] <- sim.out.df[,7]
+
+ICER[,5] <- sim.out.df[,8]
+
+ICER[,6] <- ICER[,4]-ICER[,5]
+
+ICER[,7] <- ICER[,3]/ICER[,6]
+
+ICER[,8] <- ICER[,1]/ICER[,4]
+
+ICER[,9] <- ICER[,2]/ICER[,5]
+
+ICER[,10] <- sim.out.df[,1]
+
+ICER[,11] <- sim.out.df [,2]
+
+ICER[,12] <- ICER[,1]/ICER[,10]
+
+ICER[,13] = ICER[,2]/ICER[,11]
+
+ICER[,14] = sim.out.df[,9]
+
+ICER [,15] =sim.out.df[,10]
+
+ICER[,16] = ICER [,1]/ICER[,14]
+
+ICER[,17] = ICER[,2]/ICER[,15]
+
+ICER [,18] = ICER[,3]/(ICER[,14]-ICER[,15])
+ICER.df <- data.frame(ICER)
+
+#total cost intervention
+#quantile(ICER.df[,7], 0.500)
+#quantile(ICER.df[,7],0.025)
+#quantile(ICER.df[,7],0.975)
+
+# Create a vector of percentiles to calculate
+percentiles <- c(0.025, 0.5, 0.975)
+
+# Create an empty data frame to store the results
+percentile_results <- data.frame()
+
+# Iterate through each column in ICER.df and calculate percentiles
+for (col_name in colnames(ICER.df)) {
+  column_percentiles <- quantile(ICER.df[[col_name]], percentiles)
+  
+  # Create a new data frame to store the percentiles for the current column
+  column_results <- data.frame(
+    Column = col_name,
+    Percentile_2.5 = column_percentiles[1],
+    Percentile_50 = column_percentiles[2],
+    Percentile_97.5 = column_percentiles[3]
+  )
+  
+  # Add the results to the overall data frame
+  percentile_results <- rbind(percentile_results, column_results)
+}
+
+
+            
+
+
+
+```
+View(ICER.df)
+View(percentile_results)
+#write.csv(percentile_results,"lamdapointseven_results_tan.csv")
+
+write.csv(ICER.df, "Tan_lamb3_ICER.csv")
+
+```{r Calculate our beta distribution values}
+#First calculate the Y value (mode) based on a desired peak/PE, X
+yvalue <- function(x, min, max) {
+  y <- ((x-min)/(max-min))
+  return(y)
+}
+#Where y = mode of the distribution
+
+betavalue <- function(a, y){
+  beta <- ((a - 1)/y) - a + 2
+  return(beta)
+}
+```
